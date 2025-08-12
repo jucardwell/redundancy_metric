@@ -7,8 +7,8 @@ library(spdep)
 library(magick)
 library(kableExtra)
 
-file_list <- list.files("..output/redundancy_output/", pattern = "\\.csv$", full.names = TRUE)
-#### RUN ONCE#####
+file_list <- list.files("output_highway", pattern = "\\.csv$", full.names = TRUE)
+
 # all csvs into list of df, add column 
 data_list <- file_list %>% 
   map(~ read_csv(.x)) %>% 
@@ -21,7 +21,7 @@ data_list <- file_list %>%
 combined_data <- data_list %>% 
   bind_rows() 
 
-#combine all links to create total sum
+
 combined_data <- combined_data %>%
   pivot_wider(
     names_from = highway, 
@@ -29,34 +29,34 @@ combined_data <- combined_data %>%
     values_fill = 0 # Fill missing values with 0
   ) %>% rowwise() %>% mutate(total_sum = sum(c_across(motorway:tertiary_link)))
 
-#write data. 
 write_csv(combined_data, "combined_redundancy_data_highway_1003_wide.csv")
-########
 
-#read in combined data
 combined_data <- read_csv("combined_redundancy_data_highway_1003_wide.csv")
 
-#cbgs
-cbgs <- st_read("") %>% rename(GEOID = BGGEOID20 ) %>% st_drop_geometry()
+cbgs <- st_read("../../../DISS_DATA_SP2023/census_data/nc_blockgroup_centroids_2264.shp") %>% rename(GEOID = BGGEOID20 ) %>% st_drop_geometry()
 cbgs <- block_groups(state = "NC", year = 2020, cb = TRUE) %>% left_join(cbgs)
 
-#identify first iteration stall (redundancy metric)
-grouped <- combined_data %>%
+# Compute elbow point per weight and o_fid
+total_redundancy <- combined_data %>%
   group_by(weight, o_fid) %>%
-  mutate(
-    stalled_iteration = if_else(row_number() > 1 & total_sum == lag(total_sum),
-                                row_number(), 
-                                NA_integer_),
-    first_stall = if_else(cumsum(!is.na(stalled_iteration)) == 1, stalled_iteration, NA_integer_)
-  ) 
+  mutate(rat_lower_order = (secondary + secondary_link + tertiary + tertiary_link + unclassified + residential) / total_sum,
+    start_point = list(c(min(iteration), min(total_sum))),
+    end_point = list(c(max(iteration), max(total_sum))),
+    distance = abs((end_point[[1]][2] - start_point[[1]][2]) * iteration - 
+                     (end_point[[1]][1] - start_point[[1]][1]) * total_sum) / 
+      sqrt((end_point[[1]][2] - start_point[[1]][2])^2 + (end_point[[1]][1] - start_point[[1]][1])^2)
+  ) %>%
+  ungroup()
 
-#group to get lower order ratio
-grouped_simp <- grouped %>% filter(is.na(stalled_iteration)) %>% mutate(rat_lower_order = (secondary + secondary_link + tertiary + tertiary_link + unclassified + residential) / total_sum)
+add_iteration <- total_redundancy %>%
+  group_by(weight, o_fid) %>%
+  mutate(elbow = iteration[which.max(distance)])
 
-grouped_summary <- grouped_simp %>% group_by(weight, o_fid) %>% summarise(iteration = max(iteration), mean_use = mean(rat_lower_order)) 
+filtered <- add_iteration %>% group_by(weight, o_fid) %>% filter(iteration <= elbow)
 
-#calculate summary statistics by weight
-summary_table <- grouped_summary %>%
+summary <- filtered %>% group_by(weight, o_fid) %>% summarise(iteration = first(elbow), mean_use = mean(rat_lower_order) )
+
+summary_table <- summary %>%
   group_by(weight) %>%
   summarise(
     iteration_min = min(iteration),
@@ -72,10 +72,10 @@ summary_table <- grouped_summary %>%
     number_tracts = n()
   )
 
-#cisplay the summary statistics
+# Display the summary statistics
 print(summary_table)
 
-cbg_join <- cbgs %>% left_join(grouped_summary, join_by(fid == o_fid)) %>% drop_na()
+cbg_join <- cbgs %>% left_join(summary, join_by(fid == o_fid)) %>% drop_na()
 
 state <- states(cb = TRUE) %>% filter(NAME == "North Carolina")
 
@@ -91,8 +91,8 @@ ggplot() +
     axis.text = element_blank(),
     axis.ticks = element_blank(),
     panel.border = element_rect(color = "black", fill = NA),
-    legend.title = element_text(size = 15),  
-    legend.text = element_text(size = 15),   
+    legend.title = element_text(size = 15),  # Increase legend title text size
+    legend.text = element_text(size = 15),   # Increase legend labels text size
     strip.text = element_text(size = 15)  
   )
 
@@ -112,5 +112,3 @@ ggplot() +
     legend.text = element_text(size = 15),   # Increase legend labels text size
     strip.text = element_text(size = 15) 
   )
-
-
