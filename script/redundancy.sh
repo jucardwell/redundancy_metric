@@ -11,7 +11,7 @@
 module load r/4.4.0
 
 #define R script path
-R_SCRIPT="/work/users/j/m/jmcard/redundancy/script/redundancy.R"
+R_SCRIPT="redundancy.R"
 
 #get the list of files in the folder
 FILES=($(TRAVEL_MATRIX_FOLDER))
